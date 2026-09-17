@@ -1,4 +1,5 @@
 import tkinter
+from tkinter import filedialog
 
 import customtkinter
 import pygame
@@ -242,10 +243,51 @@ root.grid_rowconfigure(0, weight=1)
 main_frame = customtkinter.CTkFrame(root)
 main_frame.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
 main_frame.grid_columnconfigure(0, weight=1)
-main_frame.grid_rowconfigure(0, weight=1)
+main_frame.grid_rowconfigure(1, weight=1)
+
+
+def replace_song_library(new_song_list):
+    global song_list, current_song_index, current_song_path, current_song_duration
+    global playback_start_offset_seconds, paused_position_seconds, is_paused, base_cover_image
+    song_list = new_song_list
+    current_song_index = 0
+    current_song_path = None
+    current_song_duration = None
+    playback_start_offset_seconds = 0.0
+    paused_position_seconds = 0.0
+    is_paused = False
+    base_cover_image = None
+    try:
+        pygame.mixer.music.stop()
+    except pygame.error:
+        pass
+    set_progress_slider(0.0)
+    progress_slider.configure(state="disabled")
+    render_cover_image()
+    update_play_button()
+
+
+def select_music_folder():
+    selected_directory = filedialog.askdirectory(title="Selecciona una carpeta con música")
+    if not selected_directory:
+        return
+    selected_song_list = load_supported_audio_files(selected_directory)
+    if not selected_song_list:
+        set_song_title("La carpeta no contiene archivos .wav, .mp3 o .flac")
+        return
+    replace_song_library(selected_song_list)
+    set_song_title(f"Carpeta cargada ({len(song_list)} canciones)")
+
+
+top_bar = customtkinter.CTkFrame(main_frame, fg_color="transparent")
+top_bar.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+top_bar.grid_columnconfigure(0, weight=1)
+
+add_folder_button = customtkinter.CTkButton(top_bar, text="+ Carpeta", width=96, command=select_music_folder)
+add_folder_button.grid(row=0, column=1, sticky="e")
 
 cover_container = customtkinter.CTkFrame(main_frame)
-cover_container.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
+cover_container.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 4))
 cover_container.grid_columnconfigure(0, weight=1)
 cover_container.grid_rowconfigure(0, weight=1)
 
@@ -253,21 +295,21 @@ cover_label = tkinter.Label(cover_container, bg="#222222", fg="white", text="Sin
 cover_label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
 song_name_label = customtkinter.CTkLabel(main_frame, text="Selecciona una canción", wraplength=360)
-song_name_label.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 8))
+song_name_label.grid(row=2, column=0, sticky="ew", padx=8, pady=(4, 8))
 
 progress_slider = customtkinter.CTkSlider(main_frame, from_=0, to=1, command=on_progress_drag)
-progress_slider.grid(row=2, column=0, sticky="ew", padx=8, pady=6)
+progress_slider.grid(row=3, column=0, sticky="ew", padx=8, pady=6)
 progress_slider.configure(state="disabled")
 progress_slider.bind("<ButtonPress-1>", on_seek_start)
 progress_slider.bind("<ButtonRelease-1>", on_seek_end)
 
 volume_slider = customtkinter.CTkSlider(main_frame, from_=0, to=1, command=set_volume)
-volume_slider.grid(row=3, column=0, sticky="ew", padx=8, pady=6)
+volume_slider.grid(row=4, column=0, sticky="ew", padx=8, pady=6)
 volume_slider.set(0.5)
 set_volume(0.5)
 
 controls_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
-controls_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(8, 6))
+controls_frame.grid(row=5, column=0, sticky="ew", padx=8, pady=(8, 6))
 controls_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
 skip_back_button = customtkinter.CTkButton(controls_frame, text="<<", command=skip_backward, width=44)
