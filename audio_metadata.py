@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 try:
     from mutagen import File as MutagenFile
@@ -40,8 +40,10 @@ def _image_from_bytes(image_bytes):
         return None
     try:
         with Image.open(BytesIO(image_bytes)) as image:
-            return image.convert("RGB")
-    except (UnidentifiedImageError, OSError, ValueError):
+            # Copy the decoded image before the BytesIO/Image context is closed.
+            # exif_transpose also fixes covers stored with an EXIF orientation tag.
+            return ImageOps.exif_transpose(image).convert("RGBA").copy()
+    except (UnidentifiedImageError, OSError, ValueError, TypeError):
         return None
 
 
@@ -68,22 +70,50 @@ def _extract_title(audio):
     return None
 
 
+def _picture_data(picture):
+    if isinstance(picture, (bytes, bytearray, memoryview)):
+        return bytes(picture)
+    return getattr(picture, "data", None)
+
+
+def _picture_is_front_cover(picture):
+    # Mutagen uses type 3 for an explicitly marked front cover.
+    return getattr(picture, "type", None) == 3
+
+
 def _extract_cover(audio):
+    """Return the first valid embedded cover, preferring an explicit front cover.
+
+    MP3 files expose APIC frames through ``tags`` while FLAC/WAV files commonly
+    expose attached pictures through ``audio.pictures``.  Handling both paths
+    keeps the extraction independent of the audio container.
+    """
+    candidates = []
     tags = getattr(audio, "tags", None)
     if tags:
         if hasattr(tags, "getall"):
-            for frame in tags.getall("APIC"):
-                image = _image_from_bytes(getattr(frame, "data", None))
-                if image is not None:
-                    return image
-        for key, value in tags.items():
-            if str(key).startswith("APIC"):
-                image = _image_from_bytes(getattr(value, "data", None))
-                if image is not None:
-                    return image
+            try:
+                candidates.extend(tags.getall("APIC"))
+            except (KeyError, TypeError, AttributeError):
+                pass
 
-    for picture in getattr(audio, "pictures", []) or []:
-        image = _image_from_bytes(getattr(picture, "data", None))
+        try:
+            tag_items = tags.items()
+        except (AttributeError, TypeError):
+            tag_items = ()
+        for key, value in tag_items:
+            if str(key).upper().startswith("APIC"):
+                if isinstance(value, (list, tuple)):
+                    candidates.extend(value)
+                else:
+                    candidates.append(value)
+
+    candidates.extend(getattr(audio, "pictures", []) or [])
+
+    # Stable ordering: explicit front covers first, then all other pictures.
+    candidates.sort(key=lambda picture: not _picture_is_front_cover(picture))
+    for picture in candidates:
+        image = _image_from_bytes(_picture_data(picture))
         if image is not None:
             return image
     return None
