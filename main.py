@@ -6,7 +6,13 @@ from PIL import Image, ImageTk
 
 from audio_metadata import extract_audio_metadata
 from music_loader import load_supported_audio_files
-from playback_utils import mixer_elapsed_to_position, position_to_progress, progress_to_position
+from playback_utils import (
+    mixer_elapsed_to_position,
+    position_to_progress,
+    progress_to_position,
+    resolve_play_button_text,
+    resolve_playback_action,
+)
 
 customtkinter.set_appearance_mode("System")
 customtkinter.set_default_color_theme("blue")
@@ -79,8 +85,16 @@ def set_progress_slider(value):
     internal_progress_update = False
 
 
-def update_pause_button():
-    pause_button.configure(text="Reanudar" if is_paused else "Pausar")
+def is_music_busy():
+    try:
+        return pygame.mixer.music.get_busy()
+    except pygame.error:
+        return False
+
+
+def update_play_button():
+    is_playing = bool(current_song_path) and is_music_busy() and not is_paused
+    play_button.configure(text=resolve_play_button_text(is_paused, is_playing))
 
 
 def get_current_position_seconds():
@@ -113,12 +127,37 @@ def play_song(index):
     paused_position_seconds = 0.0
     is_paused = False
     update_song_details(current_song_path)
-    update_pause_button()
-    pause_button.configure(state="normal")
+    update_play_button()
 
 
-def play_music():
-    play_song(current_song_index)
+def toggle_playback():
+    global is_paused, paused_position_seconds, playback_start_offset_seconds
+    if not song_list:
+        print("No compatible audio files found in music/")
+        return
+    action = resolve_playback_action(is_paused, is_music_busy())
+    if action == "play":
+        play_song(current_song_index)
+        return
+    if current_song_path is None:
+        play_song(current_song_index)
+        return
+    if action == "resume":
+        try:
+            pygame.mixer.music.unpause()
+        except pygame.error:
+            return
+        playback_start_offset_seconds = paused_position_seconds
+        is_paused = False
+    else:
+        current_position = get_current_position_seconds()
+        try:
+            pygame.mixer.music.pause()
+        except pygame.error:
+            return
+        paused_position_seconds = current_position if current_position is not None else 0.0
+        is_paused = True
+    update_play_button()
 
 
 def skip_forward():
@@ -161,28 +200,6 @@ def seek_to_progress(value):
     set_progress_slider(position_to_progress(target_seconds, current_song_duration))
 
 
-def toggle_pause():
-    global is_paused, paused_position_seconds, playback_start_offset_seconds
-    if current_song_path is None:
-        return
-    if is_paused:
-        try:
-            pygame.mixer.music.unpause()
-        except pygame.error:
-            return
-        playback_start_offset_seconds = paused_position_seconds
-        is_paused = False
-    else:
-        current_position = get_current_position_seconds()
-        try:
-            pygame.mixer.music.pause()
-        except pygame.error:
-            return
-        paused_position_seconds = current_position if current_position is not None else 0.0
-        is_paused = True
-    update_pause_button()
-
-
 def on_progress_drag(value):
     global pending_seek_value
     if internal_progress_update or not is_user_seeking:
@@ -211,6 +228,7 @@ def refresh_progress():
         if current_seconds is not None:
             paused_position_seconds = current_seconds
             set_progress_slider(position_to_progress(current_seconds, current_song_duration))
+    update_play_button()
     root.after(200, refresh_progress)
 
 
@@ -250,19 +268,16 @@ set_volume(0.5)
 
 controls_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
 controls_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(8, 6))
-controls_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+controls_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
 skip_back_button = customtkinter.CTkButton(controls_frame, text="<<", command=skip_backward, width=44)
 skip_back_button.grid(row=0, column=0, padx=6, sticky="ew")
 
-play_button = customtkinter.CTkButton(controls_frame, text="Play", command=play_music)
+play_button = customtkinter.CTkButton(controls_frame, text="Play", command=toggle_playback)
 play_button.grid(row=0, column=1, padx=6, sticky="ew")
 
-pause_button = customtkinter.CTkButton(controls_frame, text="Pausar", command=toggle_pause, state="disabled")
-pause_button.grid(row=0, column=2, padx=6, sticky="ew")
-
 skip_forward_button = customtkinter.CTkButton(controls_frame, text=">>", command=skip_forward, width=44)
-skip_forward_button.grid(row=0, column=3, padx=6, sticky="ew")
+skip_forward_button.grid(row=0, column=2, padx=6, sticky="ew")
 
 root.bind("<Configure>", on_window_resize)
 refresh_progress()

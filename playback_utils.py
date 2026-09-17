@@ -21,3 +21,19 @@ def mixer_elapsed_to_position(elapsed_ms, start_offset_seconds=0.0):
         return None
     safe_offset = start_offset_seconds if start_offset_seconds and start_offset_seconds > 0 else 0.0
     return safe_offset + (elapsed_ms / 1000.0)
+
+
+def resolve_playback_action(is_paused, is_playing):
+    if is_paused:
+        return "resume"
+    if is_playing:
+        return "pause"
+    return "play"
+
+
+def resolve_play_button_text(is_paused, is_playing):
+    if is_paused:
+        return "Reanudar"
+    if is_playing:
+        return "Pausar"
+    return "Play"
