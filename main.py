@@ -1,94 +1,209 @@
 import tkinter
+
 import customtkinter
 import pygame
 from PIL import Image, ImageTk
-from threading import *
-import time
-import math
-from music_loader import load_supported_audio_files
 
-customtkinter.set_appearance_mode("System") 
-customtkinter.set_default_color_theme('blue') 
+from audio_metadata import extract_audio_metadata
+from music_loader import load_supported_audio_files
+from playback_utils import position_to_progress, progress_to_position
+
+customtkinter.set_appearance_mode("System")
+customtkinter.set_default_color_theme("blue")
 
 root = customtkinter.CTk()
-root.title("Reproductor Choro MP3") #Título de la ventana
-root.geometry("400x480") #Dimensiones de la ventana
-pygame.mixer.init() #Iniciar mixer
+root.title("Reproductor Choro MP3")
+root.geometry("420x520")
+root.minsize(320, 420)
+pygame.mixer.init()
 
-songList = load_supported_audio_files("music")
-albumcoverList = []
-n = 0
+song_list = load_supported_audio_files("music")
+current_song_index = 0
+current_song_path = None
+current_song_duration = None
+is_user_seeking = False
+internal_progress_update = False
+pending_seek_value = None
+base_cover_image = None
+rendered_cover = None
 
-def getAlbumCover(songName, n):
-    if n >= len(albumcoverList):
+
+def set_song_title(text):
+    song_name_label.configure(text=text)
+
+
+def get_song_duration(song_path, metadata_duration):
+    if metadata_duration and metadata_duration > 0:
+        return metadata_duration
+    try:
+        duration = pygame.mixer.Sound(song_path).get_length()
+        return duration if duration > 0 else None
+    except pygame.error:
+        return None
+
+
+def render_cover_image():
+    global rendered_cover
+    if base_cover_image is None:
+        cover_label.configure(image="", text="Sin portada")
         return
-    image1 = Image.open(albumcoverList[n])
-    image2 = image1.resize((200, 200))
-    load = ImageTk.PhotoImage(image2)
-    label1 = tkinter.Label(root, image=load)
-    label1.image = load
-    label1.place(relx=0.19, rely=0.06)
+    target_size = max(120, min(300, cover_container.winfo_width() - 20, cover_container.winfo_height() - 20))
+    if target_size <= 0:
+        return
+    image = base_cover_image.resize((target_size, target_size), Image.Resampling.LANCZOS)
+    rendered_cover = ImageTk.PhotoImage(image)
+    cover_label.configure(image=rendered_cover, text="")
 
-    strippedString = songName[6:-3]
-    songNameLabel = tkinter.Label(text = strippedString, bg='#222222', fg='white')
-    songNameLabel.place(relx=0.4, rely=0.6)
 
-def progress(songIndex):
-    a = pygame.mixer.Sound(f'{songList[songIndex]}')
-    songLength = a.get_length() * 3
-    for i in range(0, math.ceil(songLength)):
-        time.sleep(.3)
-        progressBar.set(pygame.mixer.music.get_pos() / 1000000)
+def update_song_details(song_path):
+    global current_song_duration, base_cover_image
+    metadata = extract_audio_metadata(song_path)
+    current_song_duration = get_song_duration(song_path, metadata.duration)
+    set_song_title(metadata.title)
+    base_cover_image = metadata.cover_image
+    render_cover_image()
+    if current_song_duration:
+        progress_slider.configure(state="normal")
+    else:
+        progress_slider.configure(state="disabled")
+    set_progress_slider(0.0)
 
-def threading(songIndex):
-    t1 = Thread(target=progress, args=(songIndex,), daemon=True)
-    t1.start()
 
-def playMusic():
-    global n
-    if not songList:
+def set_progress_slider(value):
+    global internal_progress_update
+    internal_progress_update = True
+    progress_slider.set(value)
+    internal_progress_update = False
+
+
+def play_song(index):
+    global current_song_index, current_song_path
+    if not song_list:
         print("No compatible audio files found in music/")
         return
-    if n >= len(songList):
-        n = 0
-    currentSong = n
-    songName = songList[currentSong]
-    pygame.mixer.music.load(songName)
-    pygame.mixer.music.play(loops = 0)
-    pygame.mixer.music.set_volume(.5)
-    threading(currentSong)
-    getAlbumCover(songName, currentSong)
-
-    n = currentSong + 1
-
-def skipForward():
-    playMusic()
-
-def skipBackward():
-    global n
-    if not songList:
-        print("No compatible audio files found in music/")
+    current_song_index = index % len(song_list)
+    current_song_path = song_list[current_song_index]
+    try:
+        pygame.mixer.music.load(current_song_path)
+        pygame.mixer.music.play(loops=0)
+    except pygame.error as error:
+        print(f"Could not play file {current_song_path}: {error}")
         return
-    n -= 2
-    playMusic()
-
-def volume(value):
-    pygame.mixer.music.set_volume(value)
+    pygame.mixer.music.set_volume(volume_slider.get())
+    update_song_details(current_song_path)
 
 
-playButton = customtkinter.CTkButton(master=root, text="Play", command=playMusic)
-playButton.place(relx=0.5, rely=0.8, anchor=tkinter.CENTER)
+def play_music():
+    play_song(current_song_index)
 
-skipFButton = customtkinter.CTkButton(master=root, text=">>", command=skipForward, width=2)
-skipFButton.place(relx=0.75, rely=0.8, anchor=tkinter.CENTER)
 
-skipBButton = customtkinter.CTkButton(master=root, text="<<", command=skipBackward, width=2)
-skipBButton.place(relx=0.25, rely=0.8, anchor=tkinter.CENTER)
+def skip_forward():
+    play_song(current_song_index + 1)
 
-slider = customtkinter.CTkSlider(master=root, from_=0, to=1, command=volume, width=200)
-slider.place(relx=0.5, rely=0.72, anchor=tkinter.CENTER)
 
-progressBar = customtkinter.CTkProgressBar(master=root, progress_color='#e34646', width=225)
-progressBar.place(relx=0.5, rely=0.65, anchor=tkinter.CENTER)
+def skip_backward():
+    play_song(current_song_index - 1)
 
+
+def set_volume(value):
+    pygame.mixer.music.set_volume(float(value))
+
+
+def seek_to_progress(value):
+    if current_song_path is None:
+        return
+    target_seconds = progress_to_position(float(value), current_song_duration)
+    if target_seconds is None:
+        return
+    try:
+        pygame.mixer.music.set_pos(target_seconds)
+    except pygame.error:
+        try:
+            pygame.mixer.music.load(current_song_path)
+            pygame.mixer.music.play(loops=0, start=target_seconds)
+        except pygame.error:
+            return
+    pygame.mixer.music.set_volume(volume_slider.get())
+    set_progress_slider(position_to_progress(target_seconds, current_song_duration))
+
+
+def on_progress_drag(value):
+    global pending_seek_value
+    if internal_progress_update or not is_user_seeking:
+        return
+    pending_seek_value = float(value)
+
+
+def on_seek_start(_event):
+    global is_user_seeking, pending_seek_value
+    is_user_seeking = True
+    pending_seek_value = progress_slider.get()
+
+
+def on_seek_end(_event):
+    global is_user_seeking, pending_seek_value
+    is_user_seeking = False
+    seek_value = pending_seek_value if pending_seek_value is not None else progress_slider.get()
+    pending_seek_value = None
+    seek_to_progress(seek_value)
+
+
+def refresh_progress():
+    if current_song_duration and not is_user_seeking:
+        current_position_ms = pygame.mixer.music.get_pos()
+        if current_position_ms >= 0:
+            current_seconds = current_position_ms / 1000.0
+            set_progress_slider(position_to_progress(current_seconds, current_song_duration))
+    root.after(200, refresh_progress)
+
+
+def on_window_resize(_event):
+    render_cover_image()
+
+
+root.grid_columnconfigure(0, weight=1)
+root.grid_rowconfigure(0, weight=1)
+
+main_frame = customtkinter.CTkFrame(root)
+main_frame.grid(row=0, column=0, sticky="nsew", padx=12, pady=12)
+main_frame.grid_columnconfigure(0, weight=1)
+main_frame.grid_rowconfigure(0, weight=1)
+
+cover_container = customtkinter.CTkFrame(main_frame)
+cover_container.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 4))
+cover_container.grid_columnconfigure(0, weight=1)
+cover_container.grid_rowconfigure(0, weight=1)
+
+cover_label = tkinter.Label(cover_container, bg="#222222", fg="white", text="Sin portada")
+cover_label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+song_name_label = customtkinter.CTkLabel(main_frame, text="Selecciona una canción", wraplength=360)
+song_name_label.grid(row=1, column=0, sticky="ew", padx=8, pady=(4, 8))
+
+progress_slider = customtkinter.CTkSlider(main_frame, from_=0, to=1, command=on_progress_drag)
+progress_slider.grid(row=2, column=0, sticky="ew", padx=8, pady=6)
+progress_slider.configure(state="disabled")
+progress_slider.bind("<ButtonPress-1>", on_seek_start)
+progress_slider.bind("<ButtonRelease-1>", on_seek_end)
+
+volume_slider = customtkinter.CTkSlider(main_frame, from_=0, to=1, command=set_volume)
+volume_slider.grid(row=3, column=0, sticky="ew", padx=8, pady=6)
+volume_slider.set(0.5)
+set_volume(0.5)
+
+controls_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
+controls_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(8, 6))
+controls_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+skip_back_button = customtkinter.CTkButton(controls_frame, text="<<", command=skip_backward, width=44)
+skip_back_button.grid(row=0, column=0, padx=6, sticky="ew")
+
+play_button = customtkinter.CTkButton(controls_frame, text="Play", command=play_music)
+play_button.grid(row=0, column=1, padx=6, sticky="ew")
+
+skip_forward_button = customtkinter.CTkButton(controls_frame, text=">>", command=skip_forward, width=44)
+skip_forward_button.grid(row=0, column=2, padx=6, sticky="ew")
+
+root.bind("<Configure>", on_window_resize)
+refresh_progress()
 root.mainloop()
