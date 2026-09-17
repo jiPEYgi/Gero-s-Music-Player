@@ -6,7 +6,7 @@ from PIL import Image, ImageTk
 
 from audio_metadata import extract_audio_metadata
 from music_loader import load_supported_audio_files
-from playback_utils import position_to_progress, progress_to_position
+from playback_utils import mixer_elapsed_to_position, position_to_progress, progress_to_position
 
 customtkinter.set_appearance_mode("System")
 customtkinter.set_default_color_theme("blue")
@@ -24,6 +24,9 @@ current_song_duration = None
 is_user_seeking = False
 internal_progress_update = False
 pending_seek_value = None
+playback_start_offset_seconds = 0.0
+paused_position_seconds = 0.0
+is_paused = False
 base_cover_image = None
 rendered_cover = None
 
@@ -76,8 +79,24 @@ def set_progress_slider(value):
     internal_progress_update = False
 
 
+def update_pause_button():
+    pause_button.configure(text="Reanudar" if is_paused else "Pausar")
+
+
+def get_current_position_seconds():
+    if current_song_duration is None:
+        return None
+    if is_paused:
+        return paused_position_seconds
+    current_position_ms = pygame.mixer.music.get_pos()
+    current_seconds = mixer_elapsed_to_position(current_position_ms, playback_start_offset_seconds)
+    if current_seconds is None:
+        return None
+    return min(current_seconds, current_song_duration)
+
+
 def play_song(index):
-    global current_song_index, current_song_path
+    global current_song_index, current_song_path, playback_start_offset_seconds, paused_position_seconds, is_paused
     if not song_list:
         print("No compatible audio files found in music/")
         return
@@ -90,7 +109,12 @@ def play_song(index):
         print(f"Could not play file {current_song_path}: {error}")
         return
     pygame.mixer.music.set_volume(volume_slider.get())
+    playback_start_offset_seconds = 0.0
+    paused_position_seconds = 0.0
+    is_paused = False
     update_song_details(current_song_path)
+    update_pause_button()
+    pause_button.configure(state="normal")
 
 
 def play_music():
@@ -110,21 +134,53 @@ def set_volume(value):
 
 
 def seek_to_progress(value):
+    global playback_start_offset_seconds, paused_position_seconds
     if current_song_path is None:
         return
     target_seconds = progress_to_position(float(value), current_song_duration)
     if target_seconds is None:
         return
     try:
-        pygame.mixer.music.set_pos(target_seconds)
+        if is_paused:
+            pygame.mixer.music.load(current_song_path)
+            pygame.mixer.music.play(loops=0, start=target_seconds)
+            pygame.mixer.music.pause()
+        else:
+            pygame.mixer.music.set_pos(target_seconds)
     except pygame.error:
         try:
             pygame.mixer.music.load(current_song_path)
             pygame.mixer.music.play(loops=0, start=target_seconds)
+            if is_paused:
+                pygame.mixer.music.pause()
         except pygame.error:
             return
+    playback_start_offset_seconds = target_seconds
+    paused_position_seconds = target_seconds
     pygame.mixer.music.set_volume(volume_slider.get())
     set_progress_slider(position_to_progress(target_seconds, current_song_duration))
+
+
+def toggle_pause():
+    global is_paused, paused_position_seconds, playback_start_offset_seconds
+    if current_song_path is None:
+        return
+    if is_paused:
+        try:
+            pygame.mixer.music.unpause()
+        except pygame.error:
+            return
+        playback_start_offset_seconds = paused_position_seconds
+        is_paused = False
+    else:
+        current_position = get_current_position_seconds()
+        try:
+            pygame.mixer.music.pause()
+        except pygame.error:
+            return
+        paused_position_seconds = current_position if current_position is not None else 0.0
+        is_paused = True
+    update_pause_button()
 
 
 def on_progress_drag(value):
@@ -149,10 +205,11 @@ def on_seek_end(_event):
 
 
 def refresh_progress():
+    global paused_position_seconds
     if current_song_duration and not is_user_seeking:
-        current_position_ms = pygame.mixer.music.get_pos()
-        if current_position_ms >= 0:
-            current_seconds = current_position_ms / 1000.0
+        current_seconds = get_current_position_seconds()
+        if current_seconds is not None:
+            paused_position_seconds = current_seconds
             set_progress_slider(position_to_progress(current_seconds, current_song_duration))
     root.after(200, refresh_progress)
 
@@ -193,7 +250,7 @@ set_volume(0.5)
 
 controls_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
 controls_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=(8, 6))
-controls_frame.grid_columnconfigure((0, 1, 2), weight=1)
+controls_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
 skip_back_button = customtkinter.CTkButton(controls_frame, text="<<", command=skip_backward, width=44)
 skip_back_button.grid(row=0, column=0, padx=6, sticky="ew")
@@ -201,8 +258,11 @@ skip_back_button.grid(row=0, column=0, padx=6, sticky="ew")
 play_button = customtkinter.CTkButton(controls_frame, text="Play", command=play_music)
 play_button.grid(row=0, column=1, padx=6, sticky="ew")
 
+pause_button = customtkinter.CTkButton(controls_frame, text="Pausar", command=toggle_pause, state="disabled")
+pause_button.grid(row=0, column=2, padx=6, sticky="ew")
+
 skip_forward_button = customtkinter.CTkButton(controls_frame, text=">>", command=skip_forward, width=44)
-skip_forward_button.grid(row=0, column=2, padx=6, sticky="ew")
+skip_forward_button.grid(row=0, column=3, padx=6, sticky="ew")
 
 root.bind("<Configure>", on_window_resize)
 refresh_progress()
