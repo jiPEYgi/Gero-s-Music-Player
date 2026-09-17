@@ -14,3 +14,10 @@ def progress_to_position(progress_value, duration_seconds):
     if duration_seconds is None or duration_seconds <= 0:
         return None
     return clamp(progress_value) * duration_seconds
+
+
+def mixer_elapsed_to_position(elapsed_ms, start_offset_seconds=0.0):
+    if elapsed_ms is None or elapsed_ms < 0:
+        return None
+    safe_offset = start_offset_seconds if start_offset_seconds and start_offset_seconds > 0 else 0.0
+    return safe_offset + (elapsed_ms / 1000.0)
