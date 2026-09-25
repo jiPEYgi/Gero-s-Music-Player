@@ -7,7 +7,7 @@ Un reproductor de música que hice de puro aburrimiento.
 Instala las dependencias:
 
 ```bash
-pip install customtkinter pygame pillow mutagen
+pip install customtkinter pygame-ce pillow mutagen
 ```
 
 ## Uso
