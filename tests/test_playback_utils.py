@@ -1,6 +1,7 @@
 import unittest
 
 from playback_utils import (
+    calculate_locked_cover_size,
     mixer_elapsed_to_position,
     position_to_progress,
     progress_to_position,
@@ -45,6 +46,29 @@ class TestPlaybackUtils(unittest.TestCase):
         self.assertEqual(resolve_play_button_text(is_paused=True, is_playing=True), "Reanudar")
         self.assertEqual(resolve_play_button_text(is_paused=False, is_playing=True), "Pausar")
         self.assertEqual(resolve_play_button_text(is_paused=False, is_playing=False), "Play")
+
+    def test_calculate_locked_cover_size_handles_none_and_invalid(self):
+        self.assertEqual(calculate_locked_cover_size(None, 400), 150)
+        self.assertEqual(calculate_locked_cover_size(400, None), 150)
+        self.assertEqual(calculate_locked_cover_size(0, 400), 150)
+        self.assertEqual(calculate_locked_cover_size(-50, -100), 150)
+
+    def test_calculate_locked_cover_size_locks_to_exact_steps(self):
+        self.assertEqual(calculate_locked_cover_size(180, 220), 150)
+        self.assertEqual(calculate_locked_cover_size(200, 300), 200)
+        self.assertEqual(calculate_locked_cover_size(249, 400), 200)
+        self.assertEqual(calculate_locked_cover_size(250, 400), 250)
+        self.assertEqual(calculate_locked_cover_size(299, 400), 250)
+        self.assertEqual(calculate_locked_cover_size(300, 350), 300)
+        self.assertEqual(calculate_locked_cover_size(360, 340), 300)
+        self.assertEqual(calculate_locked_cover_size(380, 350), 350)
+        self.assertEqual(calculate_locked_cover_size(440, 400), 400)
+        self.assertEqual(calculate_locked_cover_size(480, 460), 450)
+
+    def test_calculate_locked_cover_size_caps_at_500(self):
+        self.assertEqual(calculate_locked_cover_size(500, 500), 500)
+        self.assertEqual(calculate_locked_cover_size(800, 900), 500)
+        self.assertEqual(calculate_locked_cover_size(1920, 1080), 500)
 
 
 if __name__ == "__main__":

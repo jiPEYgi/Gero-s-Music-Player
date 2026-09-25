@@ -4,7 +4,13 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from audio_metadata import _extract_cover, extract_audio_metadata, resolve_title
+from audio_metadata import (
+    _extract_artist,
+    _extract_cover,
+    extract_audio_metadata,
+    resolve_artist,
+    resolve_title,
+)
 
 
 def _png_bytes(color=(255, 0, 0, 255)):
@@ -21,7 +27,7 @@ class _FakeFrame:
 
 class _FakeAudio:
     def __init__(self, tags=None, pictures=None, info=None):
-        self.tags = tags or {}
+        self.tags = tags if tags is not None else {}
         self.pictures = pictures
         self.info = info
 
@@ -43,6 +49,28 @@ class TestAudioMetadata(unittest.TestCase):
 
     def test_resolve_title_reads_values(self):
         self.assertEqual(resolve_title(["  Song Title  "], "music/file.mp3"), "Song Title")
+
+    def test_resolve_artist_uses_fallback_default(self):
+        self.assertEqual(resolve_artist(None), "Artista desconocido")
+        self.assertEqual(resolve_artist([]), "Artista desconocido")
+        self.assertEqual(resolve_artist("   "), "Artista desconocido")
+
+    def test_resolve_artist_reads_values(self):
+        self.assertEqual(resolve_artist(["  Artist Name  "]), "Artist Name")
+        self.assertEqual(resolve_artist("Radiohead"), "Radiohead")
+
+    def test_extract_artist_reads_tags(self):
+        audio_id3 = _FakeAudio(tags={"TPE1": ["Kero Kero Bonito"]})
+        self.assertEqual(_extract_artist(audio_id3), "Kero Kero Bonito")
+
+        audio_flac = _FakeAudio(tags={"artist": ["Cities Aviv"]})
+        self.assertEqual(_extract_artist(audio_flac), "Cities Aviv")
+
+        audio_author = _FakeAudio(tags={"author": "Composer"})
+        self.assertEqual(_extract_artist(audio_author), "Composer")
+
+        audio_empty = _FakeAudio(tags={})
+        self.assertIsNone(_extract_artist(audio_empty))
 
     def test_extract_cover_ignores_invalid_embedded_image(self):
         audio = _FakeAudio(tags={"APIC:Cover": _FakeFrame(b"not-an-image")})
@@ -74,6 +102,7 @@ class TestAudioMetadata(unittest.TestCase):
         with patch("audio_metadata.MutagenFile", side_effect=RuntimeError("broken")):
             metadata = extract_audio_metadata("music/demo.flac")
         self.assertEqual(metadata.title, "demo")
+        self.assertEqual(metadata.artist, "Artista desconocido")
         self.assertIsNone(metadata.cover_image)
         self.assertIsNone(metadata.duration)
 

@@ -13,8 +13,9 @@ except ImportError:  # pragma: no cover - depends on runtime environment
 @dataclass
 class AudioMetadata:
     title: str
-    cover_image: Image.Image | None
-    duration: float | None
+    artist: str = "Artista desconocido"
+    cover_image: Image.Image | None = None
+    duration: float | None = None
 
 
 def _normalize_text(value):
@@ -51,9 +52,13 @@ def resolve_title(raw_title, file_path):
     return _normalize_text(raw_title) or Path(file_path).stem
 
 
+def resolve_artist(raw_artist, fallback="Artista desconocido"):
+    return _normalize_text(raw_artist) or fallback
+
+
 def _extract_title(audio):
     tags = getattr(audio, "tags", None)
-    if not tags:
+    if tags is None:
         return None
 
     for key in ("title", "TIT2"):
@@ -67,6 +72,32 @@ def _extract_title(audio):
             title = _normalize_text(value)
             if title:
                 return title
+    return None
+
+
+def _extract_artist(audio):
+    tags = getattr(audio, "tags", None)
+    if tags is None:
+        return None
+
+    for key in ("artist", "TPE1", "\xa9ART", "TPE2", "albumartist", "aART"):
+        if key in tags:
+            artist = _normalize_text(tags.get(key))
+            if artist:
+                return artist
+
+    try:
+        tag_items = tags.items()
+    except (AttributeError, TypeError):
+        tag_items = ()
+
+    for key, value in tag_items:
+        key_str = str(key).lower()
+        if "artist" in key_str or "author" in key_str:
+            artist = _normalize_text(value)
+            if artist:
+                return artist
+
     return None
 
 
@@ -90,7 +121,7 @@ def _extract_cover(audio):
     """
     candidates = []
     tags = getattr(audio, "tags", None)
-    if tags:
+    if tags is not None:
         if hasattr(tags, "getall"):
             try:
                 candidates.extend(tags.getall("APIC"))
@@ -129,18 +160,20 @@ def _extract_duration(audio):
 
 def extract_audio_metadata(file_path):
     fallback_title = Path(file_path).stem
+    fallback_artist = "Artista desconocido"
     if MutagenFile is None:
-        return AudioMetadata(title=fallback_title, cover_image=None, duration=None)
+        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=None)
 
     try:
         audio = MutagenFile(file_path)
     except Exception:
-        return AudioMetadata(title=fallback_title, cover_image=None, duration=None)
+        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=None)
 
     if audio is None:
-        return AudioMetadata(title=fallback_title, cover_image=None, duration=None)
+        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=None)
 
     title = resolve_title(_extract_title(audio), file_path)
+    artist = resolve_artist(_extract_artist(audio), fallback=fallback_artist)
     cover_image = _extract_cover(audio)
     duration = _extract_duration(audio)
-    return AudioMetadata(title=title, cover_image=cover_image, duration=duration)
+    return AudioMetadata(title=title, artist=artist, cover_image=cover_image, duration=duration)

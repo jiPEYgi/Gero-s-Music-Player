@@ -37,3 +37,29 @@ def resolve_play_button_text(is_paused, is_playing):
     if is_playing:
         return "Pausar"
     return "Play"
+
+
+DEFAULT_LOCKED_COVER_SIZES = (150, 200, 250, 300, 350, 400, 450, 500)
+
+
+def calculate_locked_cover_size(
+    available_width,
+    available_height,
+    allowed_sizes=DEFAULT_LOCKED_COVER_SIZES,
+):
+    if not allowed_sizes:
+        return 500
+    if available_width is None or available_height is None:
+        return allowed_sizes[0]
+    available_space = min(available_width, available_height)
+    if available_space <= 0:
+        return allowed_sizes[0]
+
+    chosen = allowed_sizes[0]
+    for size in allowed_sizes:
+        if size <= available_space:
+            chosen = size
+        else:
+            break
+    return min(chosen, 500)
+
