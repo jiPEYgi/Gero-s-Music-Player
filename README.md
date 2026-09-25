@@ -1,6 +1,6 @@
 # Gero's Music Player
 
-Music player I made out of pure boredom. 
+Un reproductor de música que hice de puro aburrimiento.
 
 ## Instalación
 
