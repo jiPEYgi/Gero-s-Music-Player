@@ -173,7 +173,7 @@ def play_song(index):
 
 
 def toggle_playback():
-    global is_paused, paused_position_seconds, playback_start_offset_seconds
+    global is_paused, paused_position_seconds
     if not song_list:
         print("No compatible audio files found in music/")
         return
@@ -189,7 +189,6 @@ def toggle_playback():
             pygame.mixer.music.unpause()
         except pygame.error:
             return
-        playback_start_offset_seconds = paused_position_seconds
         is_paused = False
     else:
         current_position = get_current_position_seconds()
@@ -222,20 +221,13 @@ def seek_to_progress(value):
     if target_seconds is None:
         return
     try:
+        pygame.mixer.music.load(current_song_path)
+        pygame.mixer.music.play(loops=0, start=target_seconds)
         if is_paused:
-            pygame.mixer.music.load(current_song_path)
-            pygame.mixer.music.play(loops=0, start=target_seconds)
             pygame.mixer.music.pause()
-        else:
-            pygame.mixer.music.set_pos(target_seconds)
-    except pygame.error:
-        try:
-            pygame.mixer.music.load(current_song_path)
-            pygame.mixer.music.play(loops=0, start=target_seconds)
-            if is_paused:
-                pygame.mixer.music.pause()
-        except pygame.error:
-            return
+    except pygame.error as error:
+        print(f"Could not seek in file {current_song_path}: {error}")
+        return
     playback_start_offset_seconds = target_seconds
     paused_position_seconds = target_seconds
     pygame.mixer.music.set_volume(volume_slider.get())
@@ -244,7 +236,7 @@ def seek_to_progress(value):
 
 def on_progress_drag(value):
     global pending_seek_value
-    if internal_progress_update or not is_user_seeking:
+    if internal_progress_update:
         return
     pending_seek_value = float(value)
 
@@ -252,7 +244,8 @@ def on_progress_drag(value):
 def on_seek_start(_event):
     global is_user_seeking, pending_seek_value
     is_user_seeking = True
-    pending_seek_value = progress_slider.get()
+    if pending_seek_value is None:
+        pending_seek_value = progress_slider.get()
 
 
 def on_seek_end(_event):
