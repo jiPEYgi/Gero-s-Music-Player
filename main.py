@@ -19,6 +19,10 @@ from playback_utils import (
 customtkinter.set_appearance_mode("System")
 customtkinter.set_default_color_theme("blue")
 
+# Red accent palette used throughout the UI.
+RED = ("#B71C1C", "#EF5350")
+RED_HOVER = ("#8E0000", "#C62828")
+
 root = customtkinter.CTk()
 root.title("Reproductor Choro MP3")
 root.geometry("460x620")
@@ -344,7 +348,14 @@ top_bar = customtkinter.CTkFrame(main_frame, fg_color="transparent")
 top_bar.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
 top_bar.grid_columnconfigure(0, weight=1)
 
-add_folder_button = customtkinter.CTkButton(top_bar, text="+ Carpeta", width=96, command=select_music_folder)
+add_folder_button = customtkinter.CTkButton(
+    top_bar,
+    text="+ Carpeta",
+    width=96,
+    command=select_music_folder,
+    fg_color=RED,
+    hover_color=RED_HOVER,
+)
 add_folder_button.grid(row=0, column=1, sticky="e")
 
 cover_container = customtkinter.CTkFrame(main_frame, width=300, height=300)
@@ -373,13 +384,29 @@ song_name_label = customtkinter.CTkLabel(
 )
 song_name_label.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
 
-progress_slider = customtkinter.CTkSlider(main_frame, from_=0, to=1, command=on_progress_drag)
+progress_slider = customtkinter.CTkSlider(
+    main_frame,
+    from_=0,
+    to=1,
+    command=on_progress_drag,
+    button_color=RED,
+    button_hover_color=RED_HOVER,
+    progress_color=RED,
+)
 progress_slider.grid(row=4, column=0, sticky="ew", padx=8, pady=6)
 progress_slider.configure(state="disabled")
 progress_slider.bind("<ButtonPress-1>", on_seek_start)
 progress_slider.bind("<ButtonRelease-1>", on_seek_end)
 
-volume_slider = customtkinter.CTkSlider(main_frame, from_=0, to=1, command=set_volume)
+volume_slider = customtkinter.CTkSlider(
+    main_frame,
+    from_=0,
+    to=1,
+    command=set_volume,
+    button_color=RED,
+    button_hover_color=RED_HOVER,
+    progress_color=RED,
+)
 volume_slider.grid(row=5, column=0, sticky="ew", padx=8, pady=6)
 volume_slider.set(0.5)
 set_volume(0.5)
@@ -388,13 +415,14 @@ controls_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
 controls_frame.grid(row=6, column=0, sticky="ew", padx=8, pady=(8, 6))
 controls_frame.grid_columnconfigure((0, 1, 2), weight=1)
 
-skip_back_button = customtkinter.CTkButton(controls_frame, text="<<", command=skip_backward, width=44)
+button_style = {"fg_color": RED, "hover_color": RED_HOVER}
+skip_back_button = customtkinter.CTkButton(controls_frame, text="<<", command=skip_backward, width=44, **button_style)
 skip_back_button.grid(row=0, column=0, padx=6, sticky="ew")
 
-play_button = customtkinter.CTkButton(controls_frame, text="Play", command=toggle_playback)
+play_button = customtkinter.CTkButton(controls_frame, text="Play", command=toggle_playback, **button_style)
 play_button.grid(row=0, column=1, padx=6, sticky="ew")
 
-skip_forward_button = customtkinter.CTkButton(controls_frame, text=">>", command=skip_forward, width=44)
+skip_forward_button = customtkinter.CTkButton(controls_frame, text=">>", command=skip_forward, width=44, **button_style)
 skip_forward_button.grid(row=0, column=2, padx=6, sticky="ew")
 
 root.bind("<Configure>", on_window_resize)
