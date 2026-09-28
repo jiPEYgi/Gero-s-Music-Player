@@ -24,7 +24,7 @@ RED = ("#B71C1C", "#EF5350")
 RED_HOVER = ("#8E0000", "#C62828")
 
 root = customtkinter.CTk()
-root.title("Reproductor Choro MP3")
+root.title("Gero's Music Player")
 root.geometry("460x620")
 root.minsize(340, 460)
 pygame.mixer.init()
