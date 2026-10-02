@@ -158,22 +158,84 @@ def _extract_duration(audio):
     return None
 
 
+def _extract_duration_fallback(file_path):
+    path = Path(file_path)
+    ext = path.suffix.lower()
+
+    if ext == ".wav":
+        try:
+            import wave
+            with wave.open(str(file_path), "rb") as wf:
+                framerate = wf.getframerate()
+                nframes = wf.getnframes()
+                if framerate > 0 and nframes > 0:
+                    return float(nframes) / float(framerate)
+        except Exception:
+            pass
+
+    if ext == ".mp3":
+        try:
+            from mutagen.mp3 import MP3
+            audio = MP3(str(file_path))
+            info = getattr(audio, "info", None)
+            length = getattr(info, "length", None)
+            if length and length > 0:
+                return float(length)
+        except Exception:
+            pass
+
+    if ext == ".flac":
+        try:
+            from mutagen.flac import FLAC
+            audio = FLAC(str(file_path))
+            info = getattr(audio, "info", None)
+            length = getattr(info, "length", None)
+            if length and length > 0:
+                return float(length)
+        except Exception:
+            pass
+
+    return None
+
+
 def extract_audio_metadata(file_path):
     fallback_title = Path(file_path).stem
     fallback_artist = "Artista desconocido"
     if MutagenFile is None:
-        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=None)
+        duration = _extract_duration_fallback(file_path)
+        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=duration)
 
+    audio = None
     try:
         audio = MutagenFile(file_path)
     except Exception:
-        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=None)
+        audio = None
 
     if audio is None:
-        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=None)
+        ext = Path(file_path).suffix.lower()
+        try:
+            if ext == ".mp3":
+                from mutagen.mp3 import MP3
+                audio = MP3(str(file_path))
+            elif ext == ".flac":
+                from mutagen.flac import FLAC
+                audio = FLAC(str(file_path))
+            elif ext == ".wav":
+                from mutagen.wave import WAVE
+                audio = WAVE(str(file_path))
+        except Exception:
+            audio = None
+
+    if audio is None:
+        duration = _extract_duration_fallback(file_path)
+        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=duration)
 
     title = resolve_title(_extract_title(audio), file_path)
     artist = resolve_artist(_extract_artist(audio), fallback=fallback_artist)
     cover_image = _extract_cover(audio)
     duration = _extract_duration(audio)
+    if duration is None:
+        duration = _extract_duration_fallback(file_path)
+
     return AudioMetadata(title=title, artist=artist, cover_image=cover_image, duration=duration)
+

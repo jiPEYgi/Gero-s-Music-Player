@@ -1,4 +1,7 @@
+import multiprocessing
+import sys
 import tkinter
+from pathlib import Path
 from tkinter import filedialog
 
 import customtkinter
@@ -9,9 +12,12 @@ from audio_metadata import extract_audio_metadata
 from music_loader import load_supported_audio_files
 from playback_utils import (
     calculate_locked_cover_size,
+    format_time,
+    format_volume_percentage,
     mixer_elapsed_to_position,
     position_to_progress,
     progress_to_position,
+    resolve_next_song_index,
     resolve_play_button_text,
     resolve_playback_action,
 )
@@ -23,13 +29,32 @@ customtkinter.set_default_color_theme("blue")
 RED = ("#B71C1C", "#EF5350")
 RED_HOVER = ("#8E0000", "#C62828")
 
+MUSIC_END = pygame.USEREVENT + 1
+
+try:
+    pygame.mixer.init()
+    pygame.mixer.music.set_endevent(MUSIC_END)
+except pygame.error as err:
+    print(f"Warning: Could not initialize audio mixer: {err}")
+
+
+def get_default_music_dir():
+    cwd_music = Path("music")
+    if cwd_music.exists() and cwd_music.is_dir():
+        return str(cwd_music)
+    base_dir = Path(__file__).resolve().parent
+    script_music = base_dir / "music"
+    if script_music.exists() and script_music.is_dir():
+        return str(script_music)
+    return "music"
+
+
 root = customtkinter.CTk()
 root.title("Gero's Music Player")
 root.geometry("460x620")
 root.minsize(340, 460)
-pygame.mixer.init()
 
-song_list = load_supported_audio_files("music")
+song_list = load_supported_audio_files(get_default_music_dir())
 current_song_index = 0
 current_song_path = None
 current_song_duration = None
@@ -59,10 +84,23 @@ def get_song_duration(song_path, metadata_duration):
     if metadata_duration and metadata_duration > 0:
         return metadata_duration
     try:
-        duration = pygame.mixer.Sound(song_path).get_length()
-        return duration if duration > 0 else None
-    except pygame.error:
-        return None
+        if Path(song_path).suffix.lower() == ".wav":
+            import wave
+
+            with wave.open(song_path, "rb") as wf:
+                framerate = wf.getframerate()
+                nframes = wf.getnframes()
+                if framerate > 0 and nframes > 0:
+                    return float(nframes) / float(framerate)
+    except Exception:
+        pass
+    try:
+        if Path(song_path).stat().st_size < 15 * 1024 * 1024:
+            duration = pygame.mixer.Sound(song_path).get_length()
+            return duration if duration > 0 else None
+    except (pygame.error, OSError):
+        pass
+    return None
 
 
 def get_available_cover_dimensions():
@@ -72,7 +110,14 @@ def get_available_cover_dimensions():
         w = max(100, root.winfo_width() - 24)
         h = max(100, root.winfo_height() - 24)
 
-    other_widgets = (top_bar, artist_name_label, song_name_label, progress_slider, volume_slider, controls_frame)
+    other_widgets = (
+        top_bar,
+        artist_name_label,
+        song_name_label,
+        progress_row_frame,
+        volume_row_frame,
+        controls_frame,
+    )
     measured_other_h = sum(widget.winfo_height() for widget in other_widgets if widget.winfo_ismapped())
     fixed_vertical = (measured_other_h + 62) if measured_other_h > 0 else 240
     avail_w = max(100, w - 16)
@@ -122,6 +167,7 @@ def update_song_details(song_path):
     else:
         progress_slider.configure(state="disabled")
     set_progress_slider(0.0)
+    time_label.configure(text=format_time(0.0, current_song_duration))
 
 
 def set_progress_slider(value):
@@ -176,16 +222,43 @@ def play_song(index):
     update_play_button()
 
 
+def handle_song_finished():
+    global current_song_path, is_paused, paused_position_seconds
+    if not song_list:
+        return
+    next_index = resolve_next_song_index(current_song_index, len(song_list))
+    if next_index is not None:
+        play_song(next_index)
+    else:
+        try:
+            pygame.mixer.music.stop()
+        except pygame.error:
+            pass
+        current_song_path = None
+        is_paused = False
+        paused_position_seconds = 0.0
+        set_progress_slider(0.0)
+        time_label.configure(text=format_time(0.0, current_song_duration))
+        update_play_button()
+
+
+def check_music_events():
+    try:
+        for event in pygame.event.get():
+            if event.type == MUSIC_END:
+                handle_song_finished()
+                break
+    except pygame.error:
+        pass
+
+
 def toggle_playback():
     global is_paused, paused_position_seconds
     if not song_list:
         print("No compatible audio files found in music/")
         return
     action = resolve_playback_action(is_paused, is_music_busy())
-    if action == "play":
-        play_song(current_song_index)
-        return
-    if current_song_path is None:
+    if action == "play" or current_song_path is None:
         play_song(current_song_index)
         return
     if action == "resume":
@@ -206,15 +279,24 @@ def toggle_playback():
 
 
 def skip_forward():
-    play_song(current_song_index + 1)
+    if not song_list:
+        return
+    play_song((current_song_index + 1) % len(song_list))
 
 
 def skip_backward():
-    play_song(current_song_index - 1)
+    if not song_list:
+        return
+    play_song((current_song_index - 1) % len(song_list))
 
 
 def set_volume(value):
-    pygame.mixer.music.set_volume(float(value))
+    val = float(value)
+    try:
+        pygame.mixer.music.set_volume(val)
+    except pygame.error:
+        pass
+    volume_label.configure(text=format_volume_percentage(val))
 
 
 def seek_to_progress(value):
@@ -226,7 +308,14 @@ def seek_to_progress(value):
         return
     try:
         pygame.mixer.music.load(current_song_path)
-        pygame.mixer.music.play(loops=0, start=target_seconds)
+        try:
+            pygame.mixer.music.play(loops=0, start=target_seconds)
+        except (pygame.error, NotImplementedError):
+            pygame.mixer.music.play(loops=0)
+            try:
+                pygame.mixer.music.set_pos(target_seconds)
+            except (pygame.error, NotImplementedError):
+                pass
         if is_paused:
             pygame.mixer.music.pause()
     except pygame.error as error:
@@ -236,6 +325,7 @@ def seek_to_progress(value):
     paused_position_seconds = target_seconds
     pygame.mixer.music.set_volume(volume_slider.get())
     set_progress_slider(position_to_progress(target_seconds, current_song_duration))
+    time_label.configure(text=format_time(target_seconds, current_song_duration))
 
 
 def on_progress_drag(value):
@@ -243,6 +333,10 @@ def on_progress_drag(value):
     if internal_progress_update:
         return
     pending_seek_value = float(value)
+    if current_song_duration:
+        target_seconds = progress_to_position(pending_seek_value, current_song_duration)
+        if target_seconds is not None:
+            time_label.configure(text=format_time(target_seconds, current_song_duration))
 
 
 def on_seek_start(_event):
@@ -262,21 +356,22 @@ def on_seek_end(_event):
 
 def refresh_progress():
     global paused_position_seconds
+    check_music_events()
     if current_song_duration and not is_user_seeking:
-        current_seconds = get_current_position_seconds()
-        if current_seconds is not None:
-            paused_position_seconds = current_seconds
-            set_progress_slider(position_to_progress(current_seconds, current_song_duration))
+        if not is_paused:
+            current_seconds = get_current_position_seconds()
+            if current_seconds is not None:
+                paused_position_seconds = current_seconds
+                set_progress_slider(position_to_progress(current_seconds, current_song_duration))
+                time_label.configure(text=format_time(current_seconds, current_song_duration))
     update_play_button()
     root.after(200, refresh_progress)
 
 
 def update_label_wraplength():
     wrap = max(260, root.winfo_width() - 48)
-    if "artist_name_label" in globals():
-        artist_name_label.configure(wraplength=wrap)
-    if "song_name_label" in globals():
-        song_name_label.configure(wraplength=wrap)
+    artist_name_label.configure(wraplength=wrap)
+    song_name_label.configure(wraplength=wrap)
 
 
 def _on_debounced_resize():
@@ -325,6 +420,7 @@ def replace_song_library(new_song_list):
         pass
     set_song_artist("")
     set_progress_slider(0.0)
+    time_label.configure(text="00:00")
     progress_slider.configure(state="disabled")
     render_cover_image(force=True)
     update_play_button()
@@ -340,7 +436,6 @@ def select_music_folder():
         set_song_title("La carpeta no contiene archivos .wav, .mp3 o .flac")
         return
     replace_song_library(selected_song_list)
-    set_song_artist("")
     set_song_title(f"Carpeta cargada ({len(song_list)} canciones)")
 
 
@@ -384,8 +479,13 @@ song_name_label = customtkinter.CTkLabel(
 )
 song_name_label.grid(row=3, column=0, sticky="ew", padx=8, pady=(0, 4))
 
+progress_row_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
+progress_row_frame.grid(row=4, column=0, sticky="ew", padx=8, pady=4)
+progress_row_frame.grid_columnconfigure(0, weight=1)
+progress_row_frame.grid_columnconfigure(1, weight=0)
+
 progress_slider = customtkinter.CTkSlider(
-    main_frame,
+    progress_row_frame,
     from_=0,
     to=1,
     command=on_progress_drag,
@@ -393,13 +493,27 @@ progress_slider = customtkinter.CTkSlider(
     button_hover_color=RED_HOVER,
     progress_color=RED,
 )
-progress_slider.grid(row=4, column=0, sticky="ew", padx=8, pady=6)
+progress_slider.grid(row=0, column=0, sticky="ew", padx=(0, 8))
 progress_slider.configure(state="disabled")
 progress_slider.bind("<ButtonPress-1>", on_seek_start)
 progress_slider.bind("<ButtonRelease-1>", on_seek_end)
 
+time_label = customtkinter.CTkLabel(
+    progress_row_frame,
+    text="00:00",
+    font=customtkinter.CTkFont(size=12),
+    width=56,
+    anchor="e",
+)
+time_label.grid(row=0, column=1, sticky="e")
+
+volume_row_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
+volume_row_frame.grid(row=5, column=0, sticky="ew", padx=8, pady=4)
+volume_row_frame.grid_columnconfigure(0, weight=1)
+volume_row_frame.grid_columnconfigure(1, weight=0)
+
 volume_slider = customtkinter.CTkSlider(
-    main_frame,
+    volume_row_frame,
     from_=0,
     to=1,
     command=set_volume,
@@ -407,8 +521,17 @@ volume_slider = customtkinter.CTkSlider(
     button_hover_color=RED_HOVER,
     progress_color=RED,
 )
-volume_slider.grid(row=5, column=0, sticky="ew", padx=8, pady=6)
+volume_slider.grid(row=0, column=0, sticky="ew", padx=(0, 8))
 volume_slider.set(0.5)
+
+volume_label = customtkinter.CTkLabel(
+    volume_row_frame,
+    text="50%",
+    font=customtkinter.CTkFont(size=12),
+    width=56,
+    anchor="e",
+)
+volume_label.grid(row=0, column=1, sticky="e")
 set_volume(0.5)
 
 controls_frame = customtkinter.CTkFrame(main_frame, fg_color="transparent")
@@ -427,4 +550,12 @@ skip_forward_button.grid(row=0, column=2, padx=6, sticky="ew")
 
 root.bind("<Configure>", on_window_resize)
 refresh_progress()
-root.mainloop()
+
+
+def main():
+    multiprocessing.freeze_support()
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

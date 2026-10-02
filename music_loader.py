@@ -12,11 +12,14 @@ def load_supported_audio_files(directory="music"):
 
     audio_files = [
         str(path)
-        for path in sorted(music_path.iterdir())
-        if path.is_file() and path.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
+        for path in sorted(music_path.rglob("*"))
+        if path.is_file()
+        and not any(part.startswith(".") for part in path.relative_to(music_path).parts)
+        and path.suffix.lower() in SUPPORTED_AUDIO_EXTENSIONS
     ]
 
     if not audio_files:
         print(f"No compatible audio files found in {music_path}/")
 
     return audio_files
+

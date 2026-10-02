@@ -63,3 +63,37 @@ def calculate_locked_cover_size(
             break
     return min(chosen, 500)
 
+
+def format_time(seconds, total_duration=None):
+    if seconds is None or seconds < 0:
+        seconds = 0.0
+    total = total_duration if total_duration is not None and total_duration > 0 else seconds
+    sec_int = int(seconds)
+    if total >= 3600:
+        hours = sec_int // 3600
+        minutes = (sec_int % 3600) // 60
+        secs = sec_int % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    minutes = sec_int // 60
+    secs = sec_int % 60
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def format_volume_percentage(volume_value):
+    if volume_value is None:
+        return "0%"
+    clamped = clamp(float(volume_value))
+    return f"{int(round(clamped * 100))}%"
+
+
+def resolve_next_song_index(current_index, total_songs):
+    if total_songs is None or total_songs <= 0:
+        return None
+    if current_index is None:
+        return 0
+    next_index = current_index + 1
+    if next_index < total_songs:
+        return next_index
+    return None
+
+
