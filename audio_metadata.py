@@ -6,8 +6,18 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 
 try:
     from mutagen import File as MutagenFile
+    from mutagen.mp3 import MP3
+    from mutagen.flac import FLAC, Picture as FLACPicture
+    from mutagen.id3 import ID3, APIC
+    from mutagen.wave import WAVE
 except ImportError:  # pragma: no cover - depends on runtime environment
     MutagenFile = None
+    MP3 = None
+    FLAC = None
+    FLACPicture = None
+    ID3 = None
+    APIC = None
+    WAVE = None
 
 
 @dataclass
@@ -112,6 +122,53 @@ def _picture_is_front_cover(picture):
     return getattr(picture, "type", None) == 3
 
 
+def _find_folder_cover(file_path):
+    """Search for album artwork in the same folder as the audio file."""
+    try:
+        song_path = Path(file_path)
+        folder = song_path.parent
+        if not folder.is_dir():
+            return None
+
+        image_extensions = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+        preferred_names = (
+            "cover",
+            "folder",
+            "front",
+            "album",
+            "albumart",
+            "artwork",
+            song_path.stem.lower(),
+        )
+
+        for name in preferred_names:
+            for ext in image_extensions:
+                candidate = folder / f"{name}{ext}"
+                if candidate.is_file():
+                    try:
+                        with open(candidate, "rb") as f:
+                            img = _image_from_bytes(f.read())
+                            if img is not None:
+                                return img
+                    except Exception:
+                        pass
+
+        for file in sorted(folder.iterdir()):
+            if file.is_file() and file.suffix.lower() in image_extensions:
+                lower_name = file.stem.lower()
+                if any(k in lower_name for k in ("cover", "front", "folder", "album", "art")):
+                    try:
+                        with open(file, "rb") as f:
+                            img = _image_from_bytes(f.read())
+                            if img is not None:
+                                return img
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return None
+
+
 def _extract_cover(audio):
     """Return the first valid embedded cover, preferring an explicit front cover.
 
@@ -133,13 +190,36 @@ def _extract_cover(audio):
         except (AttributeError, TypeError):
             tag_items = ()
         for key, value in tag_items:
-            if str(key).upper().startswith("APIC"):
+            key_str = str(key).upper()
+            if key_str.startswith("APIC") or key_str in ("COVR", "METADATA_BLOCK_PICTURE"):
                 if isinstance(value, (list, tuple)):
                     candidates.extend(value)
                 else:
                     candidates.append(value)
 
+        # Also inspect tag values for ID3 APIC frames
+        try:
+            tag_vals = tags.values()
+        except (AttributeError, TypeError):
+            tag_vals = ()
+        for val in tag_vals:
+            if hasattr(val, "data") and getattr(val, "FrameID", None) == "APIC" and val not in candidates:
+                candidates.append(val)
+
     candidates.extend(getattr(audio, "pictures", []) or [])
+
+    # Handle base64-encoded metadata_block_picture in OGG/FLAC if present as string/bytes
+    for item in list(candidates):
+        if isinstance(item, (str, bytes)) and not hasattr(item, "data"):
+            try:
+                import base64
+                raw_bytes = base64.b64decode(item)
+                if FLACPicture is not None:
+                    candidates.append(FLACPicture(raw_bytes))
+                else:
+                    candidates.append(raw_bytes)
+            except Exception:
+                pass
 
     # Stable ordering: explicit front covers first, then all other pictures.
     candidates.sort(key=lambda picture: not _picture_is_front_cover(picture))
@@ -160,6 +240,8 @@ def _extract_duration(audio):
 
 def _extract_duration_fallback(file_path):
     path = Path(file_path)
+    if not path.is_file():
+        return None
     ext = path.suffix.lower()
 
     if ext == ".wav":
@@ -173,9 +255,8 @@ def _extract_duration_fallback(file_path):
         except Exception:
             pass
 
-    if ext == ".mp3":
+    if ext == ".mp3" and MP3 is not None:
         try:
-            from mutagen.mp3 import MP3
             audio = MP3(str(file_path))
             info = getattr(audio, "info", None)
             length = getattr(info, "length", None)
@@ -184,9 +265,8 @@ def _extract_duration_fallback(file_path):
         except Exception:
             pass
 
-    if ext == ".flac":
+    if ext == ".flac" and FLAC is not None:
         try:
-            from mutagen.flac import FLAC
             audio = FLAC(str(file_path))
             info = getattr(audio, "info", None)
             length = getattr(info, "length", None)
@@ -195,45 +275,50 @@ def _extract_duration_fallback(file_path):
         except Exception:
             pass
 
+    try:
+        import pygame
+        if pygame.mixer.get_init():
+            snd = pygame.mixer.Sound(str(file_path))
+            length = snd.get_length()
+            if length and length > 0:
+                return float(length)
+    except Exception:
+        pass
+
     return None
 
 
 def extract_audio_metadata(file_path):
     fallback_title = Path(file_path).stem
     fallback_artist = "Artista desconocido"
-    if MutagenFile is None:
-        duration = _extract_duration_fallback(file_path)
-        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=duration)
 
     audio = None
-    try:
-        audio = MutagenFile(file_path)
-    except Exception:
-        audio = None
+    if MutagenFile is not None:
+        try:
+            audio = MutagenFile(file_path)
+        except Exception:
+            audio = None
 
-    if audio is None:
+    if audio is None and MutagenFile is not None:
         ext = Path(file_path).suffix.lower()
         try:
-            if ext == ".mp3":
-                from mutagen.mp3 import MP3
+            if ext == ".mp3" and MP3 is not None:
                 audio = MP3(str(file_path))
-            elif ext == ".flac":
-                from mutagen.flac import FLAC
+            elif ext == ".flac" and FLAC is not None:
                 audio = FLAC(str(file_path))
-            elif ext == ".wav":
-                from mutagen.wave import WAVE
+            elif ext == ".wav" and WAVE is not None:
                 audio = WAVE(str(file_path))
         except Exception:
             audio = None
 
-    if audio is None:
-        duration = _extract_duration_fallback(file_path)
-        return AudioMetadata(title=fallback_title, artist=fallback_artist, cover_image=None, duration=duration)
+    title = resolve_title(_extract_title(audio), file_path) if audio is not None else fallback_title
+    artist = resolve_artist(_extract_artist(audio), fallback=fallback_artist) if audio is not None else fallback_artist
 
-    title = resolve_title(_extract_title(audio), file_path)
-    artist = resolve_artist(_extract_artist(audio), fallback=fallback_artist)
-    cover_image = _extract_cover(audio)
-    duration = _extract_duration(audio)
+    cover_image = _extract_cover(audio) if audio is not None else None
+    if cover_image is None:
+        cover_image = _find_folder_cover(file_path)
+
+    duration = _extract_duration(audio) if audio is not None else None
     if duration is None:
         duration = _extract_duration_fallback(file_path)
 

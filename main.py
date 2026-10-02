@@ -29,6 +29,14 @@ customtkinter.set_default_color_theme("blue")
 RED = ("#B71C1C", "#EF5350")
 RED_HOVER = ("#8E0000", "#C62828")
 
+import os
+
+os.environ["SDL_VIDEODRIVER"] = "dummy"
+try:
+    pygame.display.init()
+except pygame.error:
+    pass
+
 MUSIC_END = pygame.USEREVENT + 1
 
 try:
@@ -95,9 +103,8 @@ def get_song_duration(song_path, metadata_duration):
     except Exception:
         pass
     try:
-        if Path(song_path).stat().st_size < 15 * 1024 * 1024:
-            duration = pygame.mixer.Sound(song_path).get_length()
-            return duration if duration > 0 else None
+        duration = pygame.mixer.Sound(song_path).get_length()
+        return duration if duration > 0 else None
     except (pygame.error, OSError):
         pass
     return None
@@ -152,6 +159,7 @@ def render_cover_image(force=False):
     image = base_cover_image.resize((target_size, target_size), Image.Resampling.LANCZOS)
     rendered_cover = ImageTk.PhotoImage(image)
     cover_label.configure(image=rendered_cover, text="")
+    cover_label.image = rendered_cover
 
 
 def update_song_details(song_path):
@@ -243,13 +251,19 @@ def handle_song_finished():
 
 
 def check_music_events():
+    global current_song_path, is_paused
     try:
         for event in pygame.event.get():
             if event.type == MUSIC_END:
                 handle_song_finished()
-                break
+                return
     except pygame.error:
         pass
+
+    if current_song_path is not None and not is_paused and current_song_duration is not None:
+        pos = get_current_position_seconds()
+        if not is_music_busy() and pos is not None and pos >= (current_song_duration - 0.5):
+            handle_song_finished()
 
 
 def toggle_playback():
@@ -300,7 +314,7 @@ def set_volume(value):
 
 
 def seek_to_progress(value):
-    global playback_start_offset_seconds, paused_position_seconds
+    global playback_start_offset_seconds, paused_position_seconds, is_paused
     if current_song_path is None:
         return
     target_seconds = progress_to_position(float(value), current_song_duration)
@@ -326,6 +340,17 @@ def seek_to_progress(value):
     pygame.mixer.music.set_volume(volume_slider.get())
     set_progress_slider(position_to_progress(target_seconds, current_song_duration))
     time_label.configure(text=format_time(target_seconds, current_song_duration))
+    update_play_button()
+
+
+def seek_relative(delta_seconds):
+    if current_song_duration is None or current_song_path is None:
+        return
+    current_pos = get_current_position_seconds()
+    if current_pos is None:
+        current_pos = 0.0
+    new_pos = max(0.0, min(current_song_duration, current_pos + delta_seconds))
+    seek_to_progress(position_to_progress(new_pos, current_song_duration))
 
 
 def on_progress_drag(value):
@@ -403,6 +428,20 @@ main_frame.grid_columnconfigure(0, weight=1)
 main_frame.grid_rowconfigure(1, weight=1)
 
 
+def load_song_metadata_only(index):
+    global current_song_index, current_song_path, current_song_duration, base_cover_image
+    global playback_start_offset_seconds, paused_position_seconds, is_paused
+    if not song_list:
+        return
+    current_song_index = index % len(song_list)
+    current_song_path = song_list[current_song_index]
+    playback_start_offset_seconds = 0.0
+    paused_position_seconds = 0.0
+    is_paused = False
+    update_song_details(current_song_path)
+    update_play_button()
+
+
 def replace_song_library(new_song_list):
     global song_list, current_song_index, current_song_path, current_song_duration
     global playback_start_offset_seconds, paused_position_seconds, is_paused, base_cover_image
@@ -418,11 +457,15 @@ def replace_song_library(new_song_list):
         pygame.mixer.music.stop()
     except pygame.error:
         pass
-    set_song_artist("")
-    set_progress_slider(0.0)
-    time_label.configure(text="00:00")
-    progress_slider.configure(state="disabled")
-    render_cover_image(force=True)
+    if song_list:
+        load_song_metadata_only(0)
+    else:
+        set_song_artist("")
+        set_song_title("Selecciona una canción")
+        set_progress_slider(0.0)
+        time_label.configure(text="00:00")
+        progress_slider.configure(state="disabled")
+        render_cover_image(force=True)
     update_play_button()
 
 
@@ -436,7 +479,6 @@ def select_music_folder():
         set_song_title("La carpeta no contiene archivos .wav, .mp3 o .flac")
         return
     replace_song_library(selected_song_list)
-    set_song_title(f"Carpeta cargada ({len(song_list)} canciones)")
 
 
 top_bar = customtkinter.CTkFrame(main_frame, fg_color="transparent")
@@ -549,6 +591,13 @@ skip_forward_button = customtkinter.CTkButton(controls_frame, text=">>", command
 skip_forward_button.grid(row=0, column=2, padx=6, sticky="ew")
 
 root.bind("<Configure>", on_window_resize)
+root.bind("<Right>", lambda _e: seek_relative(5.0))
+root.bind("<Left>", lambda _e: seek_relative(-5.0))
+root.bind("<space>", lambda _e: toggle_playback())
+
+if song_list:
+    load_song_metadata_only(0)
+
 refresh_progress()
 
 
